@@ -55,7 +55,11 @@ async function loadWeeks() {
 async function saveWeeks(list) {
   try {
     await storage.set("weeks-list", JSON.stringify(list), false);
-  } catch {}
+    return true;
+  } catch (err) {
+    console.error("[saveWeeks] 주차 목록 저장 실패:", err);
+    return false;
+  }
 }
 async function loadApps(weekKey) {
   try {
@@ -92,7 +96,9 @@ async function loadMeta(weekKey) {
 async function saveMeta(weekKey, meta) {
   try {
     await storage.set(`week-meta:${weekKey}`, JSON.stringify(meta), false);
-  } catch {}
+  } catch (err) {
+    console.error("[saveMeta] 근무자/결방 정보 저장 실패:", weekKey, err);
+  }
 }
 async function getDismissFlag(todayKey) {
   try {
@@ -319,7 +325,10 @@ export default function TicketConsole() {
     }
     const list = [...weeks, nw];
     setWeeks(list);
-    await saveWeeks(list);
+    const ok = await saveWeeks(list);
+    if (!ok) {
+      alert("새 주차 저장에 실패했어요. 새로고침하면 사라질 수 있어요.\n브라우저 콘솔(개발자 도구)에서 에러 내용을 확인해주세요.");
+    }
     setCurrentWeek(nw);
   };
 

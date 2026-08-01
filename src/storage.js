@@ -76,7 +76,10 @@ export const storage = {
         .select("value")
         .eq("key", key)
         .maybeSingle();
-      if (error) throw error;
+      if (error) {
+        console.error("[storage.get] Supabase 조회 실패:", key, error);
+        throw error;
+      }
       if (!data) return null;
       return { key, value: data.value, shared };
     }
@@ -88,8 +91,11 @@ export const storage = {
     if (client) {
       const { error } = await client
         .from("kv_store")
-        .upsert({ key, value, updated_at: new Date().toISOString() });
-      if (error) throw error;
+        .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+      if (error) {
+        console.error("[storage.set] Supabase 저장 실패:", key, error);
+        throw error;
+      }
       return { key, value, shared };
     }
     return localSet(key, value);
