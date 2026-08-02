@@ -41,14 +41,18 @@ const shiftMonth = (monthKey, n) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
 };
 // 오늘 날짜로부터 가장 가까운 주차를 찾는다 (미래/과거 포함, 가장 가까운 것)
-const nearestWeek = (weekList) => {
+// '이번 주'로 보여줄 주차를 정한다. 일요일부터는 그 다음 토요일이 "이번 주"가 된다
+// (예: 8/1(토) 방송이 끝나고 8/2(일)이 되는 순간부터는 8/8(토)을 보여줌).
+// 아직 그 날짜가 목록에 추가돼 있지 않다면, 그 날짜와 가장 가까운 기존 주차로 대체한다.
+const currentShowWeek = (weekList) => {
   if (!weekList || weekList.length === 0) return null;
-  const todayTime = new Date().setHours(0, 0, 0, 0);
+  const ideal = toKey(nextSaturday(new Date()));
+  if (weekList.includes(ideal)) return ideal;
+  const idealTime = new Date(ideal + "T00:00:00").getTime();
   let best = weekList[0];
   let bestDiff = Infinity;
   for (const w of weekList) {
-    const wTime = new Date(w + "T00:00:00").getTime();
-    const diff = Math.abs(wTime - todayTime);
+    const diff = Math.abs(new Date(w + "T00:00:00").getTime() - idealTime);
     if (diff < bestDiff) {
       bestDiff = diff;
       best = w;
@@ -270,7 +274,7 @@ export default function TicketConsole() {
         await saveWeeks(list);
       }
       setWeeks(list);
-      const landing = nearestWeek(list);
+      const landing = currentShowWeek(list);
       setCurrentWeek(landing);
       setMonthKey(monthKeyOf(landing));
       setReady(true);
@@ -336,7 +340,7 @@ export default function TicketConsole() {
   };
   const openWeekTab = () => {
     setView("week");
-    const nw = nearestWeek(weeks);
+    const nw = currentShowWeek(weeks);
     if (nw) setCurrentWeek(nw);
   };
   const addNextWeek = async () => {
