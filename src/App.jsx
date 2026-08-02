@@ -3,7 +3,7 @@ import {
   Radio, ChevronLeft, ChevronRight, Plus, Trash2, Pencil, Download,
   Users, ArrowUp, ArrowDown, X, Check, RotateCcw, CalendarPlus, Loader2,
   MessageSquareText, BarChart3, CalendarDays, AlertTriangle, Sparkles, Ban,
-  Cloud, HardDrive,
+  Cloud, HardDrive, ChevronUp, ChevronDown,
 } from "lucide-react";
 import { storage } from "./storage";
 
@@ -39,6 +39,22 @@ const shiftMonth = (monthKey, n) => {
   const [y, m] = monthKey.split("-").map(Number);
   const d = new Date(y, m - 1 + n, 1);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+};
+// 오늘 날짜로부터 가장 가까운 주차를 찾는다 (미래/과거 포함, 가장 가까운 것)
+const nearestWeek = (weekList) => {
+  if (!weekList || weekList.length === 0) return null;
+  const todayTime = new Date().setHours(0, 0, 0, 0);
+  let best = weekList[0];
+  let bestDiff = Infinity;
+  for (const w of weekList) {
+    const wTime = new Date(w + "T00:00:00").getTime();
+    const diff = Math.abs(wTime - todayTime);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = w;
+    }
+  }
+  return best;
 };
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -237,6 +253,8 @@ export default function TicketConsole() {
   const [monthKey, setMonthKey] = useState(null);
   const [monthlyRows, setMonthlyRows] = useState([]);
   const [monthlyLoading, setMonthlyLoading] = useState(false);
+  const [monthlyExpanded, setMonthlyExpanded] = useState(null); // weekKey | null
+  const [monthlyDetail, setMonthlyDetail] = useState({}); // weekKey -> { confirmed, waitlist, loading }
 
   // stats
   const [statsRows, setStatsRows] = useState([]);
@@ -252,9 +270,9 @@ export default function TicketConsole() {
         await saveWeeks(list);
       }
       setWeeks(list);
-      const latest = list[list.length - 1];
-      setCurrentWeek(latest);
-      setMonthKey(monthKeyOf(latest));
+      const landing = nearestWeek(list);
+      setCurrentWeek(landing);
+      setMonthKey(monthKeyOf(landing));
       setReady(true);
     })();
   }, []);
@@ -315,6 +333,11 @@ export default function TicketConsole() {
     const idx = weeks.indexOf(currentWeek);
     const ni = idx + dir;
     if (ni >= 0 && ni < weeks.length) setCurrentWeek(weeks[ni]);
+  };
+  const openWeekTab = () => {
+    setView("week");
+    const nw = nearestWeek(weeks);
+    if (nw) setCurrentWeek(nw);
   };
   const addNextWeek = async () => {
     const last = weeks[weeks.length - 1];
@@ -468,8 +491,22 @@ export default function TicketConsole() {
       }
       setMonthlyRows(rows);
       setMonthlyLoading(false);
+      setMonthlyExpanded(null);
     })();
   }, [view, monthKey, weeks]);
+
+  const toggleMonthlyRow = async (weekKey) => {
+    if (monthlyExpanded === weekKey) {
+      setMonthlyExpanded(null);
+      return;
+    }
+    setMonthlyExpanded(weekKey);
+    if (monthlyDetail[weekKey]) return; // 이미 불러온 적 있으면 재사용
+    setMonthlyDetail((prev) => ({ ...prev, [weekKey]: { loading: true } }));
+    const a = await loadApps(weekKey);
+    const { confirmed, waitlist } = splitConfirmWaitlist(a);
+    setMonthlyDetail((prev) => ({ ...prev, [weekKey]: { confirmed, waitlist, loading: false } }));
+  };
 
   // ---------- 결방(broadcast cancelled) tab ----------
   const loadOffairData = useCallback(async () => {
@@ -574,7 +611,7 @@ export default function TicketConsole() {
         </div>
 
         <nav style={styles.tabs}>
-          <button className={`tabbtn ${view === "week" ? "active" : ""}`} onClick={() => setView("week")}>
+          <button className={`tabbtn ${view === "week" ? "active" : ""}`} onClick={openWeekTab}>
             이번 주
           </button>
           <button className={`tabbtn ${view === "monthly" ? "active" : ""}`} onClick={() => setView("monthly")}>
@@ -746,23 +783,66 @@ export default function TicketConsole() {
                 </tr>
               </thead>
               <tbody>
-                {monthlyRows.map((r) => (
-                  <tr key={r.weekKey}>
-                    <td style={styles.td}>
-                      {displayDate(r.weekKey)}
-                      {r.cancelled && <span style={styles.cancelledBadge}>결방</span>}
-                    </td>
-                    {r.cancelled ? (
-                      <td style={styles.td} colSpan={2}><span style={{ color: "var(--muted)" }}>결방으로 예약 없음</span></td>
-                    ) : (
-                      <>
-                        <td style={styles.td}>{r.used} <span style={{ color: "var(--muted)", fontSize: 11 }}>({r.teams}팀)</span></td>
-                        <td style={styles.td}>{r.remaining}</td>
-                      </>
-                    )}
-                    <td style={styles.td}>{r.worker}</td>
-                  </tr>
-                ))}
+                {monthlyRows.map((r) => {
+                  const isOpen = monthlyExpanded === r.weekKey;
+                  const detail = monthlyDetail[r.weekKey];
+                  return (
+                    <React.Fragment key={r.weekKey}>
+                      <tr className="clickable-row" onClick={() => toggleMonthlyRow(r.weekKey)}>
+                        <td style={styles.td}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            {isOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                            {displayDate(r.weekKey)}
+                          </span>
+                          {r.cancelled && <span style={styles.cancelledBadge}>결방</span>}
+                        </td>
+                        {r.cancelled ? (
+                          <td style={styles.td} colSpan={2}><span style={{ color: "var(--muted)" }}>결방으로 예약 없음</span></td>
+                        ) : (
+                          <>
+                            <td style={styles.td}>{r.used} <span style={{ color: "var(--muted)", fontSize: 11 }}>({r.teams}팀)</span></td>
+                            <td style={styles.td}>{r.remaining}</td>
+                          </>
+                        )}
+                        <td style={styles.td}>{r.worker}</td>
+                      </tr>
+                      {isOpen && (
+                        <tr>
+                          <td style={styles.tdDetail} colSpan={4}>
+                            {!detail || detail.loading ? (
+                              <div style={styles.emptyState}><Loader2 className="spin" size={13} style={{ marginRight: 6 }} />불러오는 중…</div>
+                            ) : detail.confirmed.length === 0 && detail.waitlist.length === 0 ? (
+                              <div style={styles.emptyState}>이 주는 신청이 없어요.</div>
+                            ) : (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                {detail.confirmed.length > 0 && (
+                                  <div>
+                                    <div style={styles.detailLabel}>확정 ({detail.confirmed.length}팀)</div>
+                                    <div style={styles.detailChips}>
+                                      {detail.confirmed.map((a) => (
+                                        <span key={a.id} style={styles.chip}>{a.applicantName} · {ticketCount(a)}명</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {detail.waitlist.length > 0 && (
+                                  <div>
+                                    <div style={{ ...styles.detailLabel, color: "var(--red)" }}>대기 ({detail.waitlist.length}팀)</div>
+                                    <div style={styles.detailChips}>
+                                      {detail.waitlist.map((a) => (
+                                        <span key={a.id} style={{ ...styles.chip, borderColor: "var(--red)" }}>{a.applicantName} · {ticketCount(a)}명</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -1099,6 +1179,13 @@ const styles = {
   dataTable: { width: "100%", borderCollapse: "collapse" },
   th: { textAlign: "left", borderBottom: "1px solid var(--border)", padding: "6px 8px", fontSize: 11.5, color: "var(--muted)" },
   td: { borderBottom: "1px solid var(--border)", padding: "8px 8px", fontSize: 13 },
+  tdDetail: { borderBottom: "1px solid var(--border)", padding: "10px 8px 14px 26px", background: "var(--panel-alt)" },
+  detailLabel: { fontSize: 11, color: "var(--green)", marginBottom: 6, fontWeight: 700 },
+  detailChips: { display: "flex", flexWrap: "wrap", gap: 6 },
+  chip: {
+    fontSize: 11.5, border: "1px solid var(--border)", borderRadius: 999,
+    padding: "3px 10px", color: "var(--text)", fontFamily: "var(--mono)",
+  },
   overlay: {
     position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
     display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16,
@@ -1155,6 +1242,9 @@ const baseCss = `
   }
   .tabbtn:hover { color: var(--text); }
   .tabbtn.active { color: #1B1D21; background: var(--amber); border-color: var(--amber); font-weight: 700; }
+
+  .clickable-row { cursor: pointer; }
+  .clickable-row:hover td { background: var(--panel-alt); }
 
   .light {
     width: 14px; height: 14px; border-radius: 50%;
