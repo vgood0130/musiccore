@@ -201,9 +201,9 @@ function buildFinalRoster(apps) {
   const blocks = confirmed.map((a) => {
     const lines = [`${a.applicantName}/`];
     if (a.visitors.length === 0) {
-      lines.push("참여자 미입력");
+      lines.push("방문자 정보 미입력");
     } else {
-      a.visitors.forEach((v) => lines.push(`참여자 ${v.contact || "미입력"}`));
+      a.visitors.forEach((v) => lines.push(`${v.name} ${v.contact || "미입력"}`));
     }
     return lines.join("\n");
   });
