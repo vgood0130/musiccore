@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
-  Radio, ChevronLeft, ChevronRight, Plus, Trash2, Pencil, Download,
+  Radio, ChevronLeft, ChevronRight, Plus, Trash2, Pencil, Copy,
   Users, ArrowUp, ArrowDown, X, Check, RotateCcw, CalendarPlus, Loader2,
   MessageSquareText, BarChart3, CalendarDays, AlertTriangle, Sparkles, Ban,
   Cloud, HardDrive, ChevronUp, ChevronDown,
@@ -169,6 +169,7 @@ function splitConfirmWaitlist(apps) {
 // ---------- kakao free-text participant parser (best effort) ----------
 function parseParticipants(text) {
   const phoneRe = /01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
+  const hangulRe = /[가-힣]+/g;
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const results = [];
   let pendingName = null;
@@ -176,14 +177,17 @@ function parseParticipants(text) {
     const phones = line.match(phoneRe);
     if (phones && phones.length) {
       const phone = phones[0].replace(/[.\s]/g, "-").replace(/-{2,}/g, "-");
-      let rest = line.replace(phoneRe, "").trim();
-      rest = rest.replace(/^[-*•\d.)\s]+/, "").replace(/[/,:]+$/, "").trim();
-      const name = rest || pendingName || `참가자${results.length + 1}`;
+      const rest = line.replace(phoneRe, "");
+      // 이름은 한글만 인식 (예: "김다경-010-1234-1234" → "김다경")
+      const hangulMatches = rest.match(hangulRe);
+      const extractedName = hangulMatches ? hangulMatches.join("") : null;
+      const name = extractedName || pendingName || `참가자${results.length + 1}`;
       results.push({ id: uid(), name, contact: phone });
       pendingName = null;
     } else {
-      const cleaned = line.replace(/^[-*•\d.)\s]+/, "").trim();
-      if (cleaned && cleaned.length <= 12 && !/\d{3,}/.test(cleaned)) {
+      const hangulMatches = line.match(hangulRe);
+      const cleaned = hangulMatches ? hangulMatches.join("") : "";
+      if (cleaned && cleaned.length <= 12) {
         pendingName = cleaned;
       }
     }
@@ -191,24 +195,19 @@ function parseParticipants(text) {
   return results;
 }
 
-// ---------- txt export ----------
-function buildTxt(weekKey, apps) {
-  const { confirmed, used } = splitConfirmWaitlist(apps);
-  const lines = [];
-  lines.push(`${displayDate(weekKey)} 사내표 명단`);
-  lines.push(`확정 ${confirmed.length}팀 · ${used}석`);
-  lines.push("");
-  lines.push("신청자성함\t방문자성함\t방문자연락처");
-  confirmed.forEach((a) => {
+// ---------- 최종 명단 (클립보드 복사용) ----------
+function buildFinalRoster(apps) {
+  const { confirmed } = splitConfirmWaitlist(apps);
+  const blocks = confirmed.map((a) => {
+    const lines = [a.applicantName];
     if (a.visitors.length === 0) {
-      lines.push(`${a.applicantName}\t미입력\t미입력`);
+      lines.push("미입력");
     } else {
-      a.visitors.forEach((v) => {
-        lines.push(`${a.applicantName}\t${v.name}\t${v.contact || "미입력"}`);
-      });
+      a.visitors.forEach((v) => lines.push(v.contact || "미입력"));
     }
+    return lines.join("\n");
   });
-  return lines.join("\n");
+  return blocks.join("\n\n");
 }
 function downloadTxt(filename, content) {
   const blob = new Blob(["\uFEFF" + content], { type: "text/plain;charset=utf-8" });
@@ -469,8 +468,22 @@ export default function TicketConsole() {
   };
 
   // ---------- export ----------
-  const doExport = () => {
-    downloadTxt(`사내표명단_${currentWeek}.txt`, buildTxt(currentWeek, apps));
+  const [exportCopied, setExportCopied] = useState(false);
+  const doExport = async () => {
+    const text = buildFinalRoster(apps);
+    if (!text) {
+      alert("확정된 신청이 없어서 내보낼 명단이 없어요.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setExportCopied(true);
+      setTimeout(() => setExportCopied(false), 2000);
+    } catch (err) {
+      console.error("[doExport] 클립보드 복사 실패:", err);
+      downloadTxt(`사내표명단_${currentWeek}.txt`, text);
+      alert("클립보드 복사 권한이 없어서 대신 TXT 파일로 저장했어요.");
+    }
   };
 
   // ---------- monthly summary ----------
@@ -564,7 +577,7 @@ export default function TicketConsole() {
         a.forEach((app) => {
           const key = app.applicantName.trim();
           if (!key) return;
-          counts.set(key, (counts.get(key) || 0) + 1);
+          counts.set(key, (counts.get(key) || 0) + ticketCount(app));
         });
       }
       const rows = Array.from(counts.entries())
@@ -701,8 +714,8 @@ export default function TicketConsole() {
               카톡 붙여넣기로 등록
             </button>
             <button className="ghostbtn" onClick={doExport}>
-              <Download size={14} />
-              명단 TXT 내보내기
+              {exportCopied ? <Check size={14} /> : <Copy size={14} />}
+              {exportCopied ? "복사됨!" : "최종 명단 추출"}
             </button>
             {!confirmReset ? (
               <button className="ghostbtn danger" onClick={() => setConfirmReset(true)}>
@@ -855,7 +868,7 @@ export default function TicketConsole() {
 
       {view === "stats" && (
         <section style={styles.panelBlock}>
-          <div style={styles.panelTitle}>신청자 횟수 통계 (전체 기간)</div>
+          <div style={styles.panelTitle}>신청자 통계 — 누적 방문 인원순 (전체 기간)</div>
           {statsLoading ? (
             <div style={styles.emptyState}><Loader2 className="spin" size={14} style={{ marginRight: 6 }} />불러오는 중…</div>
           ) : statsRows.length === 0 ? (
@@ -865,14 +878,14 @@ export default function TicketConsole() {
               <thead>
                 <tr>
                   <th style={styles.th}>신청자</th>
-                  <th style={styles.th}>신청 횟수</th>
+                  <th style={styles.th}>누적 방문 인원</th>
                 </tr>
               </thead>
               <tbody>
                 {statsRows.map((r) => (
                   <tr key={r.name}>
                     <td style={styles.td}>{r.name}</td>
-                    <td style={{ ...styles.td, fontFamily: "var(--mono)" }}>{r.count}회</td>
+                    <td style={{ ...styles.td, fontFamily: "var(--mono)" }}>{r.count}명</td>
                   </tr>
                 ))}
               </tbody>
@@ -1111,7 +1124,7 @@ const styles = {
   workerPicker: { display: "flex", alignItems: "center", gap: 8 },
   select: {
     background: "var(--panel-alt)", border: "1px solid var(--border)", color: "var(--text)",
-    borderRadius: 6, padding: "6px 8px", fontSize: 12,
+    borderRadius: 6, padding: "6px 8px", fontSize: 16,
   },
   weekLabel: { fontFamily: "var(--mono)", fontSize: 14, minWidth: 120, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
   cancelledBadge: {
@@ -1144,16 +1157,16 @@ const styles = {
   label: { display: "block", fontSize: 11, color: "var(--muted)", marginTop: 10, marginBottom: 4 },
   input: {
     width: "100%", background: "var(--panel-alt)", border: "1px solid var(--border)",
-    borderRadius: 6, padding: "8px 9px", color: "var(--text)", fontSize: 13, boxSizing: "border-box",
+    borderRadius: 6, padding: "8px 9px", color: "var(--text)", fontSize: 16, boxSizing: "border-box",
   },
   textarea: {
     width: "100%", background: "var(--panel-alt)", border: "1px solid var(--border)",
-    borderRadius: 6, padding: "8px 9px", color: "var(--text)", fontSize: 12.5, boxSizing: "border-box",
+    borderRadius: 6, padding: "8px 9px", color: "var(--text)", fontSize: 16, boxSizing: "border-box",
     fontFamily: "var(--mono)", resize: "vertical",
   },
   inlineInput: {
     background: "var(--panel-alt)", border: "1px solid var(--border)", borderRadius: 5,
-    padding: "5px 7px", color: "var(--text)", fontSize: 12, flex: 1, minWidth: 90,
+    padding: "5px 7px", color: "var(--text)", fontSize: 16, flex: 1, minWidth: 90,
   },
   primaryBtn: {
     marginTop: 14, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
@@ -1264,5 +1277,6 @@ const baseCss = `
 
   @media (max-width: 720px) {
     .tc-grid { grid-template-columns: 1fr !important; }
+    input, select, textarea { font-size: 16px !important; }
   }
 `;
